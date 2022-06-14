@@ -5,12 +5,13 @@
 This is it: a Docker multi-container environment with Hadoop (HDFS), Spark and Hive. But without the large memory requirements of a Cloudera sandbox. (On my Windows 10 laptop (with WSL2) it seems to consume a mere 3 GB.)
 
 The Docker multi-container environment is as following
-Hadoop Node: 
+* Hadoop Node: 
+
   HDFS: 1 NameNode and 2 DataNode.
   Yarn: 1 Ressource Manager 2 Node Manager.
-Hbase: 1 master 2 Regions.
-Spark: 1 master 2 Workers.
-Hive Servers.
+* Hbase: 1 master 2 Regions.
+* Spark: 1 master 2 Workers.
+* Hive Servers.
 
 
 The only thing lacking, is that Hive server doesn't start automatically. To be added when I understand how to do that in docker-compose.
