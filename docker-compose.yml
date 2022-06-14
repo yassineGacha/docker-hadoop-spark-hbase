@@ -1,6 +1,10 @@
 version: "3"
 
 services:
+
+###################### Hadoop Cluster ###################
+
+###################### HDFS (1 NN & 2DN) 
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
     container_name: namenode
@@ -16,9 +20,9 @@ services:
     env_file:
       - ./hadoop.env
 
-  datanode:
+  datanode1:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
-    container_name: datanode
+    container_name: datanode1
     restart: always
     volumes:
       - hadoop_datanode:/hadoop/dfs/data
@@ -29,42 +33,69 @@ services:
       - "9864:9864"
     env_file:
       - ./hadoop.env
+  datanode2:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode2
+    restart: always
+    # volumes:
+    #   - hadoop_datanode:/hadoop/dfs/data
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
+    ports:
+      - "9865:9864"
+    env_file:
+      - ./hadoop.env
 
+################## Yarn (1 RM & 2 NM) 
   resourcemanager:
     image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
     container_name: resourcemanager
     restart: always
     environment:
-      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864"
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode1:9864 datanode2:9864"
     env_file:
       - ./hadoop.env
 
   nodemanager1:
     image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
-    container_name: nodemanager
+    container_name: nodemanager1
     restart: always
     environment:
-      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864 resourcemanager:8088"
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode1:9864 datanode2:9864 resourcemanager:8088"
     env_file:
       - ./hadoop.env
 
+  nodemanager2:
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    container_name: nodemanager2
+    restart: always
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode1:9864 datanode2:9864  resourcemanager:8088"
+    env_file:
+      - ./hadoop.env
+
+################  histiory server ######################
   historyserver:
     image: bde2020/hadoop-historyserver:2.0.0-hadoop3.2.1-java8
     container_name: historyserver
     restart: always
     environment:
-      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864 resourcemanager:8088"
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode1:9864 datanode2:9864 resourcemanager:8088"
     volumes:
       - hadoop_historyserver:/hadoop/yarn/timeline
     env_file:
       - ./hadoop.env
 
+################# Spark Cluster ###########################
   spark-master:
     image: bde2020/spark-master:3.0.0-hadoop3.2
     container_name: spark-master
     depends_on:
       - namenode
-      - datanode
+      - datanode1
+      - datanode2
+
     ports:
       - "8080:8080"
       - "7077:7077"
@@ -83,12 +114,25 @@ services:
       - "SPARK_MASTER=spark://spark-master:7077"
       - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
 
+  spark-worker-2:
+      image: bde2020/spark-worker:3.0.0-hadoop3.2
+      container_name: spark-worker-2
+      depends_on:
+        - spark-master
+      ports:
+        - "8082:8081"
+      environment:
+        - "SPARK_MASTER=spark://spark-master:7077"
+        - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+
+################# hive #######################
   hive-server:
     image: bde2020/hive:2.3.2-postgresql-metastore
     container_name: hive-server
     depends_on:
       - namenode
-      - datanode
+      - datanode1
+      - datanode2
     env_file:
       - ./hadoop-hive.env
     environment:
@@ -104,7 +148,7 @@ services:
       - ./hadoop-hive.env
     command: /opt/hive/bin/hive --service metastore
     environment:
-      SERVICE_PRECONDITION: "namenode:9870 datanode:9864 hive-metastore-postgresql:5432"
+      SERVICE_PRECONDITION: "namenode:9870 datanode1:9864 datanode2:9864 hive-metastore-postgresql:5432"
     ports:
       - "9083:9083"
 
@@ -117,6 +161,53 @@ services:
     container_name: presto-coordinator
     ports:
       - "8089:8089"
+
+################  Zookeeper ####################
+  zoo:
+    image: zookeeper:3.4.10
+    container_name: zoo
+    environment:
+      ZOO_MY_ID: 1
+      ZOO_SERVERS: server.1=0.0.0.0:2888:3888
+    ports:
+      - 2181:2181
+
+################  Hbase Cluster ####################
+  hbase-master:
+    image: bde2020/hbase-master:1.0.0-hbase1.2.6
+    container_name: hbase-master
+    hostname: hbase-master
+    env_file:
+      - ./hbase-distributed-local.env
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870 datanode1:9864 datanode2:9864 zoo:2181"
+    ports:
+      - 16010:16010
+
+  hbase-region-1:
+    image: bde2020/hbase-regionserver:1.0.0-hbase1.2.6
+    container_name: hbase-regionserver-1
+    hostname: hbase-regionserver-1
+    env_file:
+      - ./hbase-distributed-local.env
+    environment:
+      HBASE_CONF_hbase_regionserver_hostname: hbase-region-1
+      SERVICE_PRECONDITION: "namenode:9870 datanode1:9864 datanode2:9864 zoo:2181 hbase-master:16010"
+    ports:
+      - 16030:16030
+
+  hbase-region-2:
+    image: bde2020/hbase-regionserver:1.0.0-hbase1.2.6
+    container_name: hbase-regionserver-2
+    hostname: hbase-regionserver-2
+    env_file:
+      - ./hbase-distributed-local.env
+    environment:
+      HBASE_CONF_hbase_regionserver_hostname: hbase-region-2
+      SERVICE_PRECONDITION: "namenode:9870 datanode1:9864 datanode2:9864 zoo:2181 hbase-master:16010"
+    ports:
+      - 16031:16030
+##########################################################################################################
 
 volumes:
   hadoop_namenode:
